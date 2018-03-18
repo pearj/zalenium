@@ -32,6 +32,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
+import org.openqa.grid.internal.TestSession;
+
+import de.zalando.ep.zalenium.proxy.DockerSeleniumRemoteProxy;
 import de.zalando.ep.zalenium.proxy.DockerSeleniumStarterRemoteProxy;
 
 @SuppressWarnings("ConstantConditions")
@@ -458,6 +461,23 @@ public class DockerContainerClient implements ContainerClient {
             ga.trackException(e);
         }
         return null;
+    }
+
+    @Override
+    public boolean sessionCreated(TestSession session, DockerSeleniumRemoteProxy dockerProxy) {
+        // Nothing to do for the Docker implementation
+        return true;
+    }
+
+    @Override
+    public SeleniumContainerMode getSeleniumContainerMode() {
+        // Docker needs to use the normal method of registration, where the selenium containers call back to us when it's ready
+        return SeleniumContainerMode.MULTINODE;
+    }
+    
+    @Override
+    public boolean allocateRandomNodePort() {
+        return true;
     }
 }
 

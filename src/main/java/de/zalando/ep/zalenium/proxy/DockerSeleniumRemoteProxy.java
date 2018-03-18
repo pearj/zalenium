@@ -265,6 +265,7 @@ public class DockerSeleniumRemoteProxy extends DefaultRemoteProxy {
             WebDriverRequest seleniumRequest = (WebDriverRequest) request;
             if (RequestType.START_SESSION.equals(seleniumRequest.getRequestType())) {
                 videoRecording(DockerSeleniumContainerAction.START_RECORDING);
+                containerClient.sessionCreated(session, this);
             }
         }
     }

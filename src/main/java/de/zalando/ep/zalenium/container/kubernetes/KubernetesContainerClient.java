@@ -8,10 +8,12 @@ import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
@@ -21,10 +23,13 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang.StringUtils;
+import org.openqa.grid.internal.TestSession;
 
 import de.zalando.ep.zalenium.container.ContainerClient;
 import de.zalando.ep.zalenium.container.ContainerClientRegistration;
 import de.zalando.ep.zalenium.container.ContainerCreationStatus;
+import de.zalando.ep.zalenium.proxy.DockerSeleniumRemoteProxy;
+import de.zalando.ep.zalenium.registry.KubernetesZaleniumRegistry;
 import de.zalando.ep.zalenium.util.Environment;
 import io.fabric8.kubernetes.api.model.DoneablePod;
 import io.fabric8.kubernetes.api.model.EnvVar;
@@ -35,8 +40,11 @@ import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeMount;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
+import io.fabric8.kubernetes.client.Watcher;
 import io.fabric8.kubernetes.client.dsl.ExecListener;
 import io.fabric8.kubernetes.client.dsl.ExecWatch;
+import io.fabric8.kubernetes.client.dsl.PodResource;
 import okhttp3.Response;
 
 public class KubernetesContainerClient implements ContainerClient {
@@ -67,6 +75,13 @@ public class KubernetesContainerClient implements ContainerClient {
     private final Environment environment;
 
     private final Function<PodConfiguration, DoneablePod> createDoneablePod;
+    
+    private final boolean isHighlyAvailable;
+    
+    private final SeleniumContainerMode seleniumContainerMode;
+    
+    // Lookup our current hostname, this lets us lookup ourselves via the kubernetes api
+    private final String hostname = findHostname();
 
     public KubernetesContainerClient(Environment environment,
                                      Function<PodConfiguration, DoneablePod> createDoneablePod,
@@ -75,11 +90,20 @@ public class KubernetesContainerClient implements ContainerClient {
 
         this.environment = environment;
         this.createDoneablePod = createDoneablePod;
+        
+        isHighlyAvailable = this.environment.getBooleanEnvVariable("ZALENIUM_ENABLE_HA", false);
+        // In HA mode we don't want the selenium pods to call zalenium to register, we will instead rely
+        // on kubernetes notifying zalenium with a selenium pod has passed a health check.
+        if (isHighlyAvailable) {
+            seleniumContainerMode = SeleniumContainerMode.GRID;
+        }
+        else {
+            seleniumContainerMode = SeleniumContainerMode.MULTINODE;
+        }
+        
         try {
+            
             this.client = client;
-
-            // Lookup our current hostname, this lets us lookup ourselves via the kubernetes api
-            String hostname = findHostname();
 
             zaleniumPod = client.pods().withName(hostname).get();
 
@@ -304,6 +328,7 @@ public class KubernetesContainerClient implements ContainerClient {
         Map<String, String> podSelector = new HashMap<>();
 
         PodConfiguration config = new PodConfiguration();
+        config.setNodePort(nodePort);
         config.setClient(client);
         config.setContainerIdPrefix(containerIdPrefix);
         config.setImage(image);
@@ -393,6 +418,76 @@ public class KubernetesContainerClient implements ContainerClient {
         registration.setContainerId(containerId);
 
         return registration;
+    }
+
+    public boolean sessionCreated(TestSession session, DockerSeleniumRemoteProxy dockerProxy) {
+        String seleniumPodName = dockerProxy.getRegistration().getContainerId();
+        
+        PodResource<Pod, DoneablePod> seleniumPod = client.pods().withName(seleniumPodName);
+        seleniumPod.edit()
+            .editMetadata()
+                .addToAnnotations("zalenium/testSessionExternalKey", session.getExternalKey().getKey())
+                .addToAnnotations("zalenium/testSessionInternalKey", session.getInternalKey())
+                .addToAnnotations("zalenium/currentZaleniumPod", hostname)
+            .endMetadata()
+        .done();
+        
+        return true;
+    }
+    
+    @Override
+    public SeleniumContainerMode getSeleniumContainerMode() {
+        return this.seleniumContainerMode;
+    }
+    
+    @Override
+    public boolean allocateRandomNodePort() {
+        return false;
+    }
+    
+    public boolean startPodWatchers(KubernetesZaleniumRegistry k8sRegistry) {
+        PodWatcher podWatcher = new PodWatcher();
+        client.pods().withLabels(createdByZaleniumMap).watch(podWatcher);
+        return true;
+    }
+    
+    private final class PodWatcher implements Watcher<Pod> {
+        private HashSet<String> kubernetesPodRegistered = new HashSet<>();
+                
+        @Override
+        public void eventReceived(io.fabric8.kubernetes.client.Watcher.Action action, Pod pod) {
+            // TODO Auto-generated method stub
+            String podName = pod.getMetadata().getName();
+            
+            if (!kubernetesPodRegistered.contains(podName) && isPodReady(pod)) {
+                // do registration
+//                http://joel-zalenium-test-zalenium.192.168.99.100.nip.io/grid/api/proxy/?id=http://127.0.0.1:25551
+//                http://joel-zalenium-test-zalenium.192.168.99.100.nip.io/grid/api/proxy/?id=http://127.0.0.1:25550
+//
+//                org.openqa.grid.common.RegistrationRequest.fromJson(String)
+//
+//                org.openqa.grid.internal.utils.SelfRegisteringRemote.registerToHub(boolean)
+//                org.openqa.grid.web.servlet.RegistrationServlet.process(HttpServletRequest, HttpServletResponse)
+                kubernetesPodRegistered.add(podName);
+            }
+            
+        }
+
+        @Override
+        public void onClose(KubernetesClientException arg0) {
+            // TODO Auto-generated method stub
+            
+        }
+        
+        public boolean isPodReady (Pod pod) {
+            Boolean podReady = pod.getStatus().getConditions().stream()
+                .filter(condition -> condition.getType().equals("Ready"))
+                .map(condition -> condition.getStatus().equals("True"))
+                .findFirst().orElse(false);
+            
+            return podReady;
+        }
+        
     }
 
     @SuppressWarnings("WeakerAccess")
@@ -520,6 +615,18 @@ public class KubernetesContainerClient implements ContainerClient {
                             .addToLimits(config.getPodLimits())
                             .addToRequests(config.getPodRequests())
                         .endResources()
+                        // Add a readiness health check so that we can know when the selenium pod is ready to accept requests
+                        // so then we can initiate a registration.
+                        .withNewReadinessProbe()
+                            .withNewExec()
+                                .addToCommand(new String[] {"/bin/sh", "-c", "curl -s http://localhost:" + config.getNodePort() + "/wd/hub/status | jq .value.ready | grep true"})
+                            .endExec()
+                            .withInitialDelaySeconds(5)
+                            .withFailureThreshold(60)
+                            .withPeriodSeconds(1)
+                            .withTimeoutSeconds(1)
+                            .withSuccessThreshold(1)
+                        .endReadinessProbe()
                     .endContainer()
                     .withRestartPolicy("Never")
                 .endSpec();

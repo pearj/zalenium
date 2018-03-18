@@ -426,6 +426,11 @@ StartUp()
         DEBUG_FLAG=-debug
     fi
 
+    ZALENIUM_REGISTRY=de.zalando.ep.zalenium.registry.ZaleniumRegistry
+    if [ "${ZALENIUM_ENABLE_HA}" == "true" ]; then
+        ZALENIUM_REGISTRY=de.zalando.ep.zalenium.registry.KubernetesZaleniumRegistry
+    fi
+
     java ${ZALENIUM_EXTRA_JVM_PARAMS} -Djava.util.logging.config.file=logging_${DEBUG_MODE}.properties \
     -Dlogback.configurationFile=logback.xml \
     -cp ${SELENIUM_ARTIFACT}:${ZALENIUM_ARTIFACT} org.openqa.grid.selenium.GridLauncherV3 \
@@ -435,7 +440,7 @@ StartUp()
     -servlet de.zalando.ep.zalenium.dashboard.DashboardCleanupServlet \
     -servlet de.zalando.ep.zalenium.dashboard.DashboardInformationServlet \
     -servlet de.zalando.ep.zalenium.servlet.VncAuthenticationServlet \
-    -registry de.zalando.ep.zalenium.registry.ZaleniumRegistry \
+    -registry ${ZALENIUM_REGISTRY} \
     ${SELENIUM_HUB_PARAMS} \
     ${DEBUG_FLAG} &
 

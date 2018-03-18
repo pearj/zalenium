@@ -2,6 +2,7 @@ package de.zalando.ep.zalenium.proxy;
 
 import com.google.common.annotations.VisibleForTesting;
 import de.zalando.ep.zalenium.container.ContainerClient;
+import de.zalando.ep.zalenium.container.ContainerClient.SeleniumContainerMode;
 import de.zalando.ep.zalenium.container.ContainerCreationStatus;
 import de.zalando.ep.zalenium.container.ContainerFactory;
 import de.zalando.ep.zalenium.dashboard.Dashboard;
@@ -455,10 +456,17 @@ public class DockerSeleniumStarterRemoteProxy extends DefaultRemoteProxy impleme
             attempts++;
             if (forceCreation || validateAmountOfDockerSeleniumContainers()) {
 
-                final int nodePort = findFreePortInRange(LOWER_PORT_BOUNDARY, UPPER_PORT_BOUNDARY);
+                int nodePort;
+                // When using an overlay network, like with kubernetes, it's not necessary to generate random ports
+                if (containerClient.allocateRandomNodePort()) {
+                    nodePort = findFreePortInRange(LOWER_PORT_BOUNDARY, UPPER_PORT_BOUNDARY);
+                }
+                else {
+                    nodePort = LOWER_PORT_BOUNDARY;
+                }
 
                 Map<String, String> envVars = buildEnvVars(timeZone, screenSize, hostIpAddress, sendAnonymousUsageInfo,
-                        nodePolling, nodeRegisterCycle, nodePort, seleniumNodeParams);
+                        nodePolling, nodeRegisterCycle, nodePort, seleniumNodeParams, containerClient.getSeleniumContainerMode());
 
                 ContainerCreationStatus creationStatus = containerClient
                         .createContainer(getContainerName(), latestImage, envVars, String.valueOf(nodePort));
@@ -524,15 +532,30 @@ public class DockerSeleniumStarterRemoteProxy extends DefaultRemoteProxy impleme
 
     private Map<String, String> buildEnvVars(TimeZone timeZone, Dimension screenSize, String hostIpAddress,
                                              boolean sendAnonymousUsageInfo, String nodePolling,
-                                             String nodeRegisterCycle, int nodePort, String seleniumNodeParams) {
+                                             String nodeRegisterCycle, int nodePort, String seleniumNodeParams,
+                                             SeleniumContainerMode seleniumContainerMode) {
         final int noVncPort = nodePort + NO_VNC_PORT_GAP;
         final int vncPort = nodePort + VNC_PORT_GAP;
         Map<String, String> envVars = new HashMap<>();
+        
+        if (seleniumContainerMode == SeleniumContainerMode.MULTINODE) {
+            envVars.put("SELENIUM_HUB_HOST", hostIpAddress);
+            envVars.put("SELENIUM_HUB_PORT", "4445");
+            envVars.put("SELENIUM_NODE_HOST", "{{CONTAINER_IP}}");
+            envVars.put("GRID", "false");
+            envVars.put("SELENIUM_NODE_REGISTER_CYCLE", nodeRegisterCycle);
+            envVars.put("SEL_NODEPOLLING_MS", nodePolling);
+            envVars.put("SELENIUM_NODE_PROXY_PARAMS", "de.zalando.ep.zalenium.proxy.DockerSeleniumRemoteProxy");
+            envVars.put("MULTINODE", "true");
+            envVars.put("SELENIUM_MULTINODE_PORT", String.valueOf(nodePort));
+
+        }
+        else if (seleniumContainerMode == SeleniumContainerMode.GRID) {
+            envVars.put("MULTINODE", "false");
+            envVars.put("GRID", "true");
+        }
+        
         envVars.put("ZALENIUM", "true");
-        envVars.put("SELENIUM_HUB_HOST", hostIpAddress);
-        envVars.put("SELENIUM_HUB_PORT", "4445");
-        envVars.put("SELENIUM_NODE_HOST", "{{CONTAINER_IP}}");
-        envVars.put("GRID", "false");
         envVars.put("WAIT_TIMEOUT", "120s");
         envVars.put("PICK_ALL_RANDOM_PORTS", "false");
         envVars.put("VIDEO_STOP_SLEEP_SECS", "1");
@@ -545,11 +568,6 @@ public class DockerSeleniumStarterRemoteProxy extends DefaultRemoteProxy impleme
         envVars.put("SCREEN_WIDTH", String.valueOf(screenSize.getWidth()));
         envVars.put("SCREEN_HEIGHT", String.valueOf(screenSize.getHeight()));
         envVars.put("TZ", timeZone.getID());
-        envVars.put("SELENIUM_NODE_REGISTER_CYCLE", nodeRegisterCycle);
-        envVars.put("SEL_NODEPOLLING_MS", nodePolling);
-        envVars.put("SELENIUM_NODE_PROXY_PARAMS", "de.zalando.ep.zalenium.proxy.DockerSeleniumRemoteProxy");
-        envVars.put("MULTINODE", "true");
-        envVars.put("SELENIUM_MULTINODE_PORT", String.valueOf(nodePort));
         envVars.put("CHROME", "false");
         envVars.put("FIREFOX", "false");
         envVars.put("SELENIUM_NODE_PARAMS", seleniumNodeParams);

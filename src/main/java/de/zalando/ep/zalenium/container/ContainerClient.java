@@ -4,6 +4,10 @@ import java.io.InputStream;
 import java.net.URL;
 import java.util.Map;
 
+import org.openqa.grid.internal.TestSession;
+
+import de.zalando.ep.zalenium.proxy.DockerSeleniumRemoteProxy;
+
 public interface ContainerClient {
     
     void setNodeId(String nodeId);
@@ -25,4 +29,15 @@ public interface ContainerClient {
     void initialiseContainerEnvironment();
 
     String getContainerIp(String containerName);
+    
+    boolean sessionCreated(TestSession session, DockerSeleniumRemoteProxy dockerProxy);
+    
+    SeleniumContainerMode getSeleniumContainerMode();
+    
+    boolean allocateRandomNodePort();
+    
+    public static enum SeleniumContainerMode {
+        MULTINODE,
+        GRID
+    }
 }

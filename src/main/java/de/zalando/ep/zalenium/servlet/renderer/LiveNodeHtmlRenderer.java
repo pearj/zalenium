@@ -63,6 +63,7 @@ public class LiveNodeHtmlRenderer implements HtmlRenderer {
         renderSummaryValues.put("{{tabBrowsers}}", tabBrowsers());
         renderSummaryValues.put("{{noVncReadOnlyUrl}}", noVncReadOnlyUrl);
         renderSummaryValues.put("{{noVncInteractUrl}}", noVncInteractUrl);
+        renderSummaryValues.put("{{noVncEmbedUrl}}", String.format("/proxy/%s:%s/websockify", noVncIpAddress, noVncPort));
         renderSummaryValues.put("{{tabConfig}}", proxy.getConfig().toString("<p>%1$s: %2$s</p>"));
         return templateRenderer.renderTemplate(renderSummaryValues);
     }

@@ -9,6 +9,122 @@
         <style>
             .busy {opacity : 0.4; filter: alpha(opacity=40);}
         </style>
+            <!-- Always force latest IE rendering engine (even in intranet) & Chrome Frame
+                Remove this if you use the .htaccess -->
+        <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+        
+            <!-- promise polyfills promises for IE11 -->
+    <!-- <script src="/dashboard/js/novnc/vendor/promise.js"></script> -->
+    <!-- ES2015/ES6 modules polyfill -->
+    <script type="module">
+        window._noVNC_has_module_support = true;
+    </script>
+    <script>
+        window.addEventListener("load", function() {
+            if (window._noVNC_has_module_support) return;
+            var loader = document.createElement("script");
+            loader.src = "/dashboard/js/novnc/vendor/browser-es-module-loader/dist/browser-es-module-loader.js";
+            document.head.appendChild(loader);
+        });
+    </script>
+
+    <!-- actual script modules -->
+    <script type="module" crossorigin="anonymous">
+        // Load supporting scripts
+        import * as WebUtil from '/dashboard/js/novnc/app/webutil.js';
+        import RFB from '/dashboard/js/novnc/core/rfb.js';
+
+        var rfb;
+        var desktopName;
+
+        function updateDesktopName(e) {
+            desktopName = e.detail.name;
+        }
+        function status(text, level) {
+            switch (level) {
+                case 'normal':
+                case 'warn':
+                case 'error':
+                    break;
+                default:
+                    level = "warn";
+            }
+            // document.getElementById('noVNC_status_bar').className = "noVNC_status_" + level;
+            // document.getElementById('noVNC_status').textContent = text;
+        }
+
+        function connected(e) {
+            if (WebUtil.getConfigVar('encrypt',
+                                     (window.location.protocol === "https:"))) {
+                status("Connected (encrypted) to " + desktopName, "normal");
+            } else {
+                status("Connected (unencrypted) to " + desktopName, "normal");
+            }
+        }
+
+        function disconnected(e) {
+            if (e.detail.clean) {
+                status("Disconnected", "normal");
+            } else {
+                status("Something went wrong, connection is closed", "error");
+            }
+        }
+
+        WebUtil.init_logging(WebUtil.getConfigVar('logging', 'warn'));
+        document.title = WebUtil.getConfigVar('title', 'noVNC');
+        // By default, use the host and port of server that served this file
+        var host = WebUtil.getConfigVar('host', window.location.hostname);
+        var port = WebUtil.getConfigVar('port', window.location.port);
+
+        // if port == 80 (or 443) then it won't be present and should be
+        // set manually
+        if (!port) {
+            if (window.location.protocol.substring(0,5) == 'https') {
+                port = 443;
+            }
+            else if (window.location.protocol.substring(0,4) == 'http') {
+                port = 80;
+            }
+        }
+        var path = WebUtil.getConfigVar('path', 'websockify');
+
+        (function() {
+
+            $('div.vnc').each(function(index, elem) {
+            
+                status("Connecting", "normal");
+
+                if ((!host) || (!port)) {
+                    status('Must specify host and port in URL', 'error');
+                }
+
+                var url;
+
+                if (WebUtil.getConfigVar('encrypt',
+                                        (window.location.protocol === "https:"))) {
+                    url = 'wss';
+                } else {
+                    url = 'ws';
+                }
+
+                
+                url += '://' + host;
+                if(port) {
+                    url += ':' + port;
+                }
+                url += elem.dataset.novncdestination;
+
+                rfb = new RFB(elem, url,
+                            { shared: true
+                            });
+                rfb.viewOnly = WebUtil.getConfigVar('view_only', false);
+                rfb.addEventListener("connect",  connected);
+                rfb.addEventListener("disconnect", disconnected);
+                rfb.scaleViewport = true;
+                rfb.resizeSession = false;
+            });
+        })();
+    </script>
     </head>
     <body>
         <div id='main-content'>

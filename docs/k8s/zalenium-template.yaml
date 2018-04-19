@@ -16,6 +16,11 @@ parameters:
     description: "This is the number of containers that should be created when Zalenium starts up."
     value: "2"
     required: false
+  - name: "MAX_DOCKER_SELENIUM_CONTAINERS"
+    displayName: "Maximum number of docker selenium containers."
+    description: "This is the maximum number of docker selenium containers that can be running at any one time."
+    value: "10"
+    required: false  
   - name: "MAX_TEST_SESSIONS"
     displayName: "Max amount of tests executed per container."
     description: "This is the number of max amount of tests executed per container/pod."
@@ -48,21 +53,20 @@ parameters:
     required: true
   - name: "ZALENIUM_USER"
     displayName: "Basic auth user for Zalenium."
-    description: "This username is used to authenticate towards the Selenium Hub URL."
+    description: "This username is used to authenticate towards the Selenium Hub URL (leave blank if you do not want authentication)."
     value: "zalenium"
-    required: true
+    required: false
   - name: "ZALENIUM_PASSWORD"
     displayName: "Basic auth password for Zalenium."
-    description: "This password is used to authenticate towards the Selenium Hub URL."
+    description: "This password is used to authenticate towards the Selenium Hub URL (leave blank if you do not want authentication)."
     from: '[a-zA-Z0-9]{16}'
     generate: expression
-    required: true
-  - name: "SESSION_SECRET"
-    displayName: "The session secret for the OAuth proxy."
-    description: "This is an auto-generated session secret that the OAuth proxy needs."
-    from: '[a-zA-Z0-9]{43}'
-    generate: expression
-    required: true
+    required: false
+  - name: "SEND_ANONYMOUS_USAGE_INFO"
+    displayName: "Send anonymous statistics back to Zalando."
+    description: "Set to false if you do not want to send statistics back to Zalando."
+    value: "true"
+    required: false
 objects:
 - apiVersion: v1
   kind: DeploymentConfig
@@ -79,14 +83,9 @@ objects:
       role: hub
     strategy:
       activeDeadlineSeconds: 21600
-      resources: {}
-      rollingParams:
-        intervalSeconds: 1
-        maxSurge: 25%
-        maxUnavailable: 25%
+      recreateParams:
         timeoutSeconds: 600
-        updatePeriodSeconds: 1
-      type: Rolling
+      type: Recreate
     template:
       metadata:
         labels:
@@ -96,18 +95,6 @@ objects:
         containers:
         - args:
           - start
-          - --desiredContainers
-          - ${DESIRED_CONTAINERS}
-          - --maxTestSessions
-          - ${MAX_TEST_SESSIONS}
-          - --seleniumImageName
-          - "elgalu/selenium:latest"
-          - --sendAnonymousUsageInfo
-          - "false"
-          - --gridUser
-          - ${ZALENIUM_USER}
-          - --gridPassword
-          - ${ZALENIUM_PASSWORD}
           env:
           - name: ZALENIUM_KUBERNETES_CPU_REQUEST
             value: ${ZALENIUM_KUBERNETES_CPU_REQUEST}
@@ -117,10 +104,26 @@ objects:
             value: ${ZALENIUM_KUBERNETES_MEMORY_REQUEST}
           - name: ZALENIUM_KUBERNETES_MEMORY_LIMIT
             value: ${ZALENIUM_KUBERNETES_MEMORY_LIMIT}
-          - name: ZALENIUM_USER
-            value: zalenium
-          - name: ZALENIUM_PASSWORD
-            value: zalenium
+          - name: GRID_USER
+            valueFrom:
+                secretKeyRef:
+                  key: zalenium-user
+                  name: zalenium
+          - name: GRID_PASSWORD
+            valueFrom:
+                secretKeyRef:
+                  key: zalenium-password
+                  name: zalenium
+          - name: DESIRED_CONTAINERS
+            value: ${DESIRED_CONTAINERS}
+          - name: MAX_DOCKER_SELENIUM_CONTAINERS
+            value: ${MAX_DOCKER_SELENIUM_CONTAINERS}
+          - name: MAX_TEST_SESSIONS
+            value: ${MAX_TEST_SESSIONS}
+          - name: SEND_ANONYMOUS_USAGE_INFO
+            value: ${SEND_ANONYMOUS_USAGE_INFO}
+          - name: SELENIUM_IMAGE_NAME
+            value: "elgalu/selenium:latest"
           image: dosel/zalenium:latest
           imagePullPolicy: IfNotPresent
           name: zalenium
@@ -129,10 +132,10 @@ objects:
             protocol: TCP
           resources:
             requests:
-              cpu: '100m'
+              cpu: '500m'
               memory: 500Mi
             limits:
-              cpu: '200m'
+              cpu: '1000m'
               memory: 1Gi
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
@@ -158,7 +161,7 @@ objects:
   metadata:
     annotations:
       openshift.io/host.generated: 'true'
-      haproxy.router.openshift.io/timeout: "2000s"
+      haproxy.router.openshift.io/timeout: "5m"
     name: zalenium
   spec:
     to:
@@ -248,5 +251,3 @@ objects:
   subjects:
   - kind: ServiceAccount
     name: zalenium
-  userNames:
-  - zalenium
